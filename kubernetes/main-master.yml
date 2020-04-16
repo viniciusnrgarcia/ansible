@@ -1,0 +1,100 @@
+---
+- name: Instalanndo Cluster Master Kubernetes
+  hosts: kubernetes-master
+  remote_user: kubernetes-master
+  gather_facts: false
+  become: true
+  become_method: sudo
+  tasks:
+
+##### Uninstall Kubernetes
+    - name: Reset Cluster
+      command: >
+        kubeadm reset --force
+      register: kubeadm_reset 
+      ignore_errors: true
+
+    - name: Purge kubeadm kubectl kubelet kubernetes-cni kube*
+      shell: apt-get purge -y kubeadm kubectl kubelet kubernetes-cni kube*   
+      ignore_errors: true
+    - name: apt autoremove
+      shell:  apt-get autoremove -y
+      ignore_errors: true
+    - name: rm -rf ~/.kube
+      shell: rm -rf ~/.kube
+      ignore_errors: true
+
+##### update 
+    - name: Realizando update && upgrade
+      shell: apt-get update && apt-get upgrade -y
+##### instalando docker
+    - shell: "docker -v | awk -F':' '{print substr($1,16,7)}'"
+      register: docker_version
+    - name: Instalando a versão mais recente do Docker
+      shell: curl -fsSL https://get.docker.com | sh
+      when: docker_version.stdout != "19.03.8"
+    - name: Adicionando usuário ao grupo docker
+      shell: usermod -aG docker kubernetes-master
+    - name: Reiniciar serviço do Docker
+      systemd:
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+        name: docker
+    - name: Ensure docker service is started and enabled
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    - name: Disable Swap
+      shell: sudo swapoff -a
+
+##### Instalando kubernentes
+    - name: Download latest release kubectl
+      shell: curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+
+    - name: Make the kubectl binary executable && Move the binary in to your PATH.
+      shell: chmod +x ./kubectl && mv ./kubectl /usr/local/bin/kubectl
+
+    - name: Install apt-transport-https gnupg2
+      shell: apt-get update && apt-get install -y apt-transport-https gnupg2
+
+    - name: Add apt-key sources.list
+      shell: curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add - &&  echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee -a /etc/apt/sources.list.d/kubernetes.list
+
+    - name: Install kubelet kubeadm kubectl
+      shell: apt-get update && apt-get install -y kubelet kubeadm kubectl
+
+##### Inicialização do cluster Kubernetes
+    - name: Init Kubernetes cluster
+      command: >
+        kubeadm init
+      register: kubeadm_init
+
+    - name: mkdir .kube dir
+      shell: mkdir -p $HOME/.kube
+
+    - name: cp admin.conf to kube config
+      shell: cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+
+    - name: chwn config
+      shell: chown $(id -u):$(id -g) $HOME/.kube/config
+
+
+    - name: Configure weavenet networking.
+      shell: kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$(kubectl version | base64 | tr -d '\n')"
+      register: weavenet_result
+
+    - name: "Cluster token"
+      shell: kubeadm token list | cut -d ' ' -f1 | sed -n '2p'
+      register: K8S_TOKEN
+
+
+    - debug:
+        var: K8S_TOKEN.stdout
+
+
+
+
+
+
